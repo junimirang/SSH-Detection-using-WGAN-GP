@@ -18,7 +18,9 @@ import torch
 import pandas as pd
 
 from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 min_max_scaler = MinMaxScaler()
+standard_scaler = StandardScaler()
 
 
 
@@ -32,11 +34,11 @@ parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first 
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--n_cpu", type=int, default=32, help="number of cpu threads to use during batch generation")
 parser.add_argument("--latent_dim", type=int, default=100, help="dimensionality of the latent space")
-parser.add_argument("--img_size", type=int, default=11, help="size of each image dimension")
+parser.add_argument("--img_size", type=int, default=10, help="size of each image dimension")
 parser.add_argument("--channels", type=int, default=1, help="number of image channels")
-parser.add_argument("--n_critic", type=int, default=5, help="number of training steps for discriminator per iter")
-parser.add_argument("--clip_value", type=float, default=0.01, help="lower and upper clip value for disc. weights")
-parser.add_argument("--sample_interval", type=int, default=400, help="interval between image samples")
+parser.add_argument("--n_critic", type=int, default=10, help="number of training steps for discriminator per iter")
+parser.add_argument("--clip_value", type=float, default=0.001, help="lower and upper clip value for disc. weights")
+parser.add_argument("--sample_interval", type=int, default=3, help="interval between image samples")
 opt = parser.parse_args()
 print(opt)
 
@@ -49,33 +51,22 @@ batch_size = opt.batch_size
 ## Network traffic dataset ##
 ## smtp	4, web	2, ftp	3, ssh	1
 def loading_dataset(): ## CSV Dataset load
-    df = pd.read_csv('df_training_20210222_1normalization.csv', index_col=0)
+    df = pd.read_csv('df_training_20210310_1normalization.csv', index_col=0)
     dataset_df = df[["log_count_total_connect", "log_cs_byte", "log_transmit_speed_BPS", "log_count_connect_IP", "log_avg_count_connect", "Business.time",
-                     "log_time_taken", "no_url", "log_ratio_trans_receive","target"]]
-    X = df[["log_count_total_connect", "log_cs_byte", "log_transmit_speed_BPS", "log_count_connect_IP", "log_avg_count_connect", "Business.time"]]
-    dataset_df[["PC"]] = PCA(X)
-    dataset_df[["log_count_total_connect", "log_cs_byte", "log_transmit_speed_BPS", "log_count_connect_IP","log_avg_count_connect", "Business.time","log_time_taken", "no_url", "log_ratio_trans_receive", "target", "PC"]] = min_max_scaler.fit_transform(dataset_df.values)
+                     "log_time_taken", "log_ratio_trans_receive", "no_url", "target"]]
+    #X = df[["log_count_total_connect", "log_cs_byte", "log_transmit_speed_BPS", "log_count_connect_IP", "log_avg_count_connect", "Business.time"]]
+    #dataset_df[["log_count_total_connect", "log_cs_byte", "log_transmit_speed_BPS", "log_count_connect_IP", "log_avg_count_connect", "Business.time","log_time_taken", "no_url", "log_ratio_trans_receive","target"]] = min_max_scaler.fit_transform(dataset_df.values)
+    #dataset_df[["log_count_total_connect", "log_cs_byte", "log_transmit_speed_BPS", "log_count_connect_IP", "log_avg_count_connect", "Business.time", "log_time_taken", "no_url", "log_ratio_trans_receive","target"]] = standard_scaler.fit_transform(dataset_df.values)
+
     tensor_data = torch.tensor(dataset_df.values)
-    tensor_target = torch.tensor(dataset_df["target"])
+    #tensor_data = standard_scaler.fit_transform(tensor_data)
+    #tensor_target = torch.tensor(dataset_df["target"])
     tensor_length = len(tensor_data)
     return (tensor_data, tensor_length)
 
-def PCA(X):
-    features = X.T
-    covariance_matrix = np.cov(features)
-    eig_vals, eig_vecs = np.linalg.eig(covariance_matrix)
-    projected_X1 = X.dot(eig_vecs.T[0])
-    projected_X1 = (projected_X1 - min(projected_X1))/(max(projected_X1)-min(projected_X1)) #PC value normalization
-    result1 = pd.DataFrame(projected_X1, columns=['PC'])
-    return (result1)
-
 
 dataset, dataset_length = loading_dataset()
-#tensor_data = dataset
-#data_array = np.array(dataset)
-#batched_dataset = [dataset[i] for i in range(dataset_length-dataset_length%batch_size)]
-#data_set = [dataset[i] for i in range(dataset_length)]
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True,drop_last=True,)
+dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True,)
 ######################################################################
 
 cuda = True if torch.cuda.is_available() else False
@@ -152,8 +143,6 @@ def compute_gradient_penalty(D, real_samples, fake_samples):
     # Random weight term for interpolation between real and fake samples
     alpha = Tensor(np.random.random((real_samples.size(0), 1, 1, 1)))
     # Get random interpolation between real and fake samples
-    temp = (1 - alpha) * fake_samples
-    #print(temp, temp.shape)
     interpolates = (alpha * real_samples + ((1 - alpha) * fake_samples)).requires_grad_(True)
     d_interpolates = D(interpolates)
     fake = Variable(Tensor(real_samples.shape[0], 1).fill_(1.0), requires_grad=False)
@@ -232,18 +221,30 @@ for epoch in range(opt.n_epochs):
                 % (epoch, opt.n_epochs, i, len(dataloader), d_loss.item(), g_loss.item())
             )
 
-            if batches_done % opt.sample_interval == 0:
+            if ((epoch+1)%25 == 0):
                 # 저장 전 fake_data 의 차원 변경 필요
                 fake_imgs = fake_imgs.reshape((batch_size, img_size))
                 fake_data = fake_imgs.detach().numpy() ## https://sanghyu.tistory.com/19 ##
+                fake_data = min_max_scaler.fit_transform(fake_data)
                 fake_data = pd.DataFrame(fake_data)
+                fake_data.columns = ["log_time_taken", "log_cs_byte", "log_ratio_trans_receive", "log_count_connect_IP", "log_count_total_connect", "log_avg_count_connect", "log_transmit_speed_BPS",
+                                     "Business.time", "no_url", "target"]
+                fake_data["epoch"] = epoch
+                fake_data["d_loss"] = d_loss.item()
+                fake_data["g_loss"] = g_loss.item()
+                fake_data["Destination"] = "255.255.255.255"
+                fake_data["Destination Port"] = "1"
+                fake_data["Destination_ip_port"] = "255.255.255.255:1"
+
+
+                                ## d_loss 가 크고, g_loss가 작은 경우가 유용한 샘플로 사용 가능
                 with open("fake_data.csv", "ab") as f:
                     f.write(b"\n")
+                    #f.write(b"[Epoch %d/%d][Batch %d/%d],[D loss: %f],[G loss: %f],[D loss - G loss: %f]\n" % (epoch, opt.n_epochs, i, len(dataloader), d_loss.item(), g_loss.item(), d_loss-g_loss))
                     fake_data.to_csv(f, index=False)
-                #print(fake_imgs.data[:11])
-                # https://stackoverflow.com/questions/36158058/torch-save-tensor-to-csv-file
-                #fake_data = fake_imgs.data[:11]
-                #fake_data = np.array(fake_data)
-                #np.savetxt(fake_data, "images/train-" + str(epoch) +"-"+str(i) + ".csv")
+
+            ## i) 최적 모델링을 위한 WEIGHT 저장
+            ## ii) SSH에 대한 충분한 샘플링은 어떻게?
+            ## iii)
 
             batches_done += opt.n_critic
